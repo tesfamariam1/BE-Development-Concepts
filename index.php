@@ -25,10 +25,9 @@
         //     email VARCHAR(100),
         //     age INT
         // )";
-        
         // if($conn->query($createUsersTable) === TRUE) 
         // {
-        //     echo "New record created successfully";
+        //     echo "Users table created!";
         // }
 
         $name = "Charlie";
