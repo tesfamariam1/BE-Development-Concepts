@@ -775,6 +775,18 @@ Laravel provides robust authentication features out of the box. With Laravel Bre
 - Email verification
 - Session management
 
+### API Authentication in Laravel
+
+When building APIs, we don’t use session-based authentication. Instead, Laravel provides token-based authentication methods. The most common approach is Laravel Sanctum, which is lightweight and perfect for SPA/mobile/API use cases.
+
+With Sanctum you get:
+
+- Token-based login for APIs
+
+- Ability to issue and revoke tokens per user
+
+- Middleware protection for API routes
+
 ### 1. Understanding Laravel Breeze Structure
 
 **Key Authentication Files:**
@@ -790,353 +802,280 @@ Laravel provides robust authentication features out of the box. With Laravel Bre
 php artisan route:list --name=auth
 ```
 
-### 2. Authentication from Scratch (Understanding the Basics)
+### 2. Install & Configure Sanctum
 
-Let's understand what happens behind the scenes by creating custom authentication:
+```bash
+composer require laravel/sanctum
+```
+
+### 3. Create API Auth Controller
 
 **Create Custom Auth Controller:**
 
 ```bash
-php artisan make:controller CustomAuthController
+php artisan make:controller Api/AuthController
 ```
 
-**CustomAuthController: `app/Http/Controllers/CustomAuthController.php`**
+**CustomAuthController: `app/Http/Controllers/Api/AuthController.php`**
 
 ```php
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
-use Inertia\Inertia;
 
-class CustomAuthController extends Controller
+class AuthController extends Controller
 {
     /**
-     * Show registration form
-     */
-    public function showRegister()
-    {
-        return Inertia::render('CustomAuth/Register');
-    }
-
-    /**
-     * Handle registration
+     * User registration
      */
     public function register(Request $request)
     {
-        // Validate input
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
         ]);
 
-        // Create user
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
         ]);
 
-        // Log the user in
-        Auth::login($user);
+        $token = $user->createToken('api-token')->plainTextToken;
 
-        // Redirect to dashboard
-        return redirect()->route('dashboard')->with('success', 'Registration successful!');
+        return response()->json([
+            'user' => $user,
+            'token' => $token,
+        ], 201);
     }
 
     /**
-     * Show login form
-     */
-    public function showLogin()
-    {
-        return Inertia::render('CustomAuth/Login');
-    }
-
-    /**
-     * Handle login
+     * User login
      */
     public function login(Request $request)
     {
-        // Validate credentials
         $credentials = $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
+            'email' => 'required|string|email',
+            'password' => 'required|string',
         ]);
 
-        $remember = $request->boolean('remember');
+        $user = User::where('email', $credentials['email'])->first();
 
-        // Attempt login
-        if (Auth::attempt($credentials, $remember)) {
-            // Regenerate session ID for security
-            $request->session()->regenerate();
-
-            return redirect()->intended(route('dashboard'))
-                           ->with('success', 'Welcome back!');
+        if (! $user || ! Hash::check($credentials['password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'email' => 'The provided credentials are incorrect.',
+            ]);
         }
 
-        // Login failed
-        throw ValidationException::withMessages([
-            'email' => 'The provided credentials do not match our records.',
+        $token = $user->createToken('api-token')->plainTextToken;
+
+        return response()->json([
+            'user' => $user,
+            'token' => $token,
         ]);
     }
 
     /**
-     * Handle logout
+     * User logout (revoke token)
      */
     public function logout(Request $request)
     {
-        Auth::logout();
+        $request->user()->currentAccessToken()->delete();
 
-        // Invalidate session
-        $request->session()->invalidate();
-
-        // Regenerate CSRF token
-        $request->session()->regenerateToken();
-
-        return redirect()->route('home')->with('success', 'Logged out successfully!');
+        return response()->json(['message' => 'Logged out successfully']);
     }
 
     /**
-     * Show user profile
+     * Get authenticated user profile
      */
-    public function profile()
+    public function profile(Request $request)
     {
-        return Inertia::render('CustomAuth/Profile', [
-            'user' => Auth::user()
-        ]);
+        return response()->json($request->user());
     }
 }
 ```
 
-### 3. Protecting Routes with Middleware
+### 4. Define API Routes
 
-**Understanding Middleware:**
-Middleware acts as a filter for HTTP requests. Laravel's `auth` middleware ensures only authenticated users can access certain routes.
-
-**Route Protection Examples in `routes/web.php`:**
+In routes/api.php:
 
 ```php
 <?php
 
-use App\Http\Controllers\PostController;
-use App\Http\Controllers\CustomAuthController;
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\AuthController;
 
-// Public routes
-Route::get('/', function () {
-    return Inertia::render('Welcome');
-})->name('home');
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login']);
 
-// Authentication routes (if using custom)
-Route::middleware('guest')->group(function () {
-    Route::get('/custom-register', [CustomAuthController::class, 'showRegister'])->name('custom.register');
-    Route::post('/custom-register', [CustomAuthController::class, 'register']);
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/profile', [AuthController::class, 'profile']);
+    Route::post('/logout', [AuthController::class, 'logout']);
 
-    Route::get('/custom-login', [CustomAuthController::class, 'showLogin'])->name('custom.login');
-    Route::post('/custom-login', [CustomAuthController::class, 'login']);
-});
-
-// Protected routes - require authentication
-Route::middleware('auth')->group(function () {
-    Route::get('/dashboard', function () {
-        return Inertia::render('Dashboard');
-    })->name('dashboard');
-
-    Route::post('/custom-logout', [CustomAuthController::class, 'logout'])->name('custom.logout');
-    Route::get('/profile', [CustomAuthController::class, 'profile'])->name('profile');
-
-    // Posts routes
-    Route::get('/posts', [PostController::class, 'index'])->name('posts.index');
-    Route::get('/posts/{post}', [PostController::class, 'show'])->name('posts.show');
-    Route::post('/posts', [PostController::class, 'store'])->name('posts.store');
-});
-
-// Admin-only routes
-Route::middleware(['auth', 'admin'])->group(function () {
-    Route::get('/admin', function () {
-        return Inertia::render('Admin/Dashboard');
-    })->name('admin.dashboard');
+    // Example protected resource
+    Route::get('/posts', function () {
+        return \App\Models\Post::with('user')->paginate(10);
+    });
 });
 ```
 
-### 4. Custom Middleware
+### 5. Testing with Postman / HTTP Client
 
-**Create Admin Middleware:**
+**Register User: POST /api/register**
 
-```bash
-php artisan make:middleware AdminMiddleware
-```
-
-**AdminMiddleware: `app/Http/Middleware/AdminMiddleware.php`**
-
-```php
-<?php
-
-namespace App\Http\Middleware;
-
-use Closure;
-use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\Response;
-
-class AdminMiddleware
+```json
 {
-    /**
-     * Handle an incoming request.
-     */
-    public function handle(Request $request, Closure $next): Response
-    {
-        // Check if user is authenticated and is admin
-        if (!auth()->check() || !auth()->user()->is_admin) {
-            abort(403, 'Access denied. Admin privileges required.');
-        }
-
-        return $next($request);
-    }
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "password123",
+  "password_confirmation": "password123"
 }
 ```
 
-**Register middleware in `bootstrap/app.php`:**
+**Login User: `POST /api/login`**
 
-```php
-<?php
-
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Configuration\Exceptions;
-use Illuminate\Foundation\Configuration\Middleware;
-
-return Application::configure(basePath: dirname(__DIR__))
-    ->withRouting(
-        web: __DIR__.'/../routes/web.php',
-        commands: __DIR__.'/../routes/console.php',
-        health: '/up',
-    )
-    ->withMiddleware(function (Middleware $middleware) {
-        $middleware->web(append: [
-            \App\Http\Middleware\HandleInertiaRequests::class,
-            \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
-        ]);
-
-        // Register custom middleware
-        $middleware->alias([
-            'admin' => \App\Http\Middleware\AdminMiddleware::class,
-        ]);
-    })
-    ->withExceptions(function (Exceptions $exceptions) {
-        //
-    })->create();
+```json
+{
+  "email": "john@example.com",
+  "password": "password123"
+}
 ```
 
-### 5. Working with Authenticated Users
+**Response:**
 
-**Controller Methods for Auth:**
+```json
+{
+  "user": { "id": 1, "name": "John Doe", "email": "john@example.com" },
+  "token": "1|XyzAbcTokenString..."
+}
+```
+
+**Use this token in request headers:**
+
+```makefile
+Authorization: Bearer <your_token>
+```
+
+**Access Protected Route: GET /api/profile**
+
+**Response:**
+
+```json
+{
+  "id": 1,
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+```
+
+**Logout: POST /api/logout**
+
+### 6. Protecting API Resources
+
+With Sanctum, you can secure routes using the auth:sanctum middleware.
+Any request without a valid token will receive 401 Unauthorized.
+
+**Example:**
 
 ```php
 // Check if user is authenticated
-if (auth()->check()) {
-    // User is logged in
-}
+Route::middleware('auth:sanctum')->get('/user-stats', function (Request $request) {
+    return [
+        'posts' => $request->user()->posts()->count(),
+        'tags' => $request->user()->posts()->with('tags')->get()->pluck('tags')->flatten()->unique('id')->count(),
+    ];
+});
 
-// Get current user
-$user = auth()->user();
-$user = Auth::user();
-
-// Get user ID
-$userId = auth()->id();
-
-// Check if user is guest
-if (auth()->guest()) {
-    // User is not logged in
-}
-
-// Login a user programmatically
-Auth::login($user);
-
-// Login and remember
-Auth::login($user, true);
-
-// Logout current user
-Auth::logout();
-
-// Check specific abilities (if using gates/policies)
-if (auth()->user()->can('edit-post', $post)) {
-    // User can edit this post
-}
 ```
 
-**Blade/Vue Helper Examples:**
+### 7. Session Management - Token & State Management (API Version)
 
-In Vue components (using Inertia's shared data):
+Unlike web apps that use sessions and flash messages, APIs are stateless.
+This means:
 
-```javascript
-// In your Vue component
-export default {
-  computed: {
-    user() {
-      return this.$page.props.auth.user;
-    },
-    isAuthenticated() {
-      return !!this.user;
-    },
-  },
+- No session storage on the server (beyond issued tokens).
 
-  methods: {
-    logout() {
-      this.$inertia.post("/logout");
-    },
-  },
-};
-```
+- Clients (SPA, mobile, Postman) are responsible for storing tokens and state.
 
-### 6. Session Management
+- Any user feedback is returned in the API response (JSON), not via flash messages.
 
 **Understanding Sessions:**
 
 ```php
-// Store data in session
-session(['key' => 'value']);
-session()->put('user_preference', 'dark_mode');
+// Login API - return token and user info
+public function login(Request $request)
+{
+    $credentials = $request->validate([
+        'email' => 'required|string|email',
+        'password' => 'required|string',
+    ]);
 
-// Retrieve from session
-$value = session('key');
-$preference = session('user_preference', 'light_mode'); // with default
+    $user = User::where('email', $credentials['email'])->first();
 
-// Check if session has key
-if (session()->has('key')) {
-    // Session has this key
+    if (! $user || ! Hash::check($credentials['password'], $user->password)) {
+        return response()->json([
+            'message' => 'Invalid credentials'
+        ], 401);
+    }
+
+    $token = $user->createToken('api-token')->plainTextToken;
+
+    return response()->json([
+        'message' => 'Login successful',
+        'user' => $user,
+        'token' => $token,
+    ]);
 }
 
-// Flash data (available only for next request)
-session()->flash('message', 'Post created successfully!');
-
-// Get and remove from session
-$value = session()->pull('key');
-
-// Clear all session data
-session()->flush();
-
-// Regenerate session ID (security)
-session()->regenerate();
 ```
 
-**Using Flash Messages in Controllers:**
+**Logout Example:**
+
+```php
+public function logout(Request $request)
+{
+    $request->user()->currentAccessToken()->delete();
+
+    return response()->json([
+        'message' => 'Logged out successfully'
+    ]);
+}
+```
+
+**Resource Creation Example (with JSON response instead of flash session):**
 
 ```php
 public function store(Request $request)
 {
-    // Validate and create post
-    $post = auth()->user()->posts()->create($validated);
+    $validated = $request->validate([
+        'title' => 'required|max:255',
+        'content' => 'required',
+    ]);
 
-    return redirect()->route('posts.show', $post)
-                   ->with('success', 'Post created successfully!')
-                   ->with('info', 'You can edit this post anytime.');
+    $post = $request->user()->posts()->create($validated);
+
+    return response()->json([
+        'message' => 'Post created successfully!',
+        'post' => $post
+    ], 201);
 }
 ```
+
+Key Differences from Session-based Apps
+
+- No session()->put() or flash() → Use JSON response payloads.
+
+- No redirect()->with() → Client handles redirection and shows messages.
+
+- Security → API tokens are sent in headers (Authorization: Bearer <token>).
+
+- Client-side state → The frontend (Vue/React/Mobile app) stores user preferences, last visited page, or UI state locally (localStorage, cookies, or mobile secure storage).
 
 ### 7. Practical Authentication Examples
 
@@ -1154,7 +1093,6 @@ php artisan make:controller DashboardController
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Inertia\Inertia;
 
 class DashboardController extends Controller
 {
@@ -1176,7 +1114,7 @@ class DashboardController extends Controller
             'total_tags' => $user->posts()->with('tags')->get()->pluck('tags')->flatten()->unique('id')->count(),
         ];
 
-        return Inertia::render('Dashboard', [
+        return response()->json('Dashboard', [
             'posts' => $posts,
             'stats' => $stats
         ]);
