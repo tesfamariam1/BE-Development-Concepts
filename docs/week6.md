@@ -268,7 +268,7 @@ return response()->json([
   - When to use: After a successful POST.
   - Example: User registration creates a new account → return 201 + resource details.
 - 204 No Content
-  - Why: The request succeeded, but there’s nothing to return.
+  - Why: The request succeeded, but there's nothing to return.
   - When to use:
     - DELETE request succeeds.
     - PUT/PATCH updates without needing to return content.
@@ -277,7 +277,7 @@ return response()->json([
 ### Client Error Codes (4xx = client made a mistake)
 
 - 400 Bad Request
-  - Why: The server can’t process the request due to invalid syntax or missing data.
+  - Why: The server can't process the request due to invalid syntax or missing data.
   - When to use: Malformed JSON, missing required fields, or wrong query format.
   - Example: Client sends { "email": } instead of a valid string.
 - 401 Unauthorized
@@ -285,13 +285,13 @@ return response()->json([
   - When to use: When a user tries to access a protected resource without logging in.
   - Example: No Bearer token or invalid API key.
 - 403 Forbidden
-  - Why: The user is authenticated, but doesn’t have permission.
+  - Why: The user is authenticated, but doesn't have permission.
   - When to use:
     - A normal user tries to access an admin-only page.
     - Tenant isolation violation in multi-tenant apps.
   - Example: User has a valid token but lacks "admin" role.
 - 404 Not Found
-  - Why: The requested resource doesn’t exist.
+  - Why: The requested resource doesn't exist.
   - When to use:
     - User tries to fetch /users/9199 but no such user exists.
     - API route is missing.
@@ -311,7 +311,7 @@ return response()->json([
     - Unhandled exception in code.
   - Example: You forgot to handle division by zero in your API logic.
 
-**Error vs Success: 2xx = success, 4xx = client’s fault, 5xx = server’s fault.**
+**Error vs Success: 2xx = success, 4xx = client's fault, 5xx = server's fault.**
 
 ## Hands-On Exercise
 
@@ -332,37 +332,66 @@ Include HTTP Status Code.
 
 By the end of this session, you will:
 
-- Know how to create and use API resources for data transformation
-- Understand basic API authentication methods
-- Be able to test APIs effectively using Postman
+- Create and use API resources for clean data formatting
+- Build a complete API with authentication
+- Test your API effectively
 
-## 1. Creating API Resources
+## Quick Setup (15 minutes)
+
+### 1. Install Laravel Sanctum
+
+```bash
+composer require laravel/sanctum
+php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+php artisan migrate
+```
+
+### 1.A Auth:Sanctum Middleware
+
+This middleware is the gatekeeper that decides:
+
+`Does the request belongs to a valid, authenticated user? If yes, let it through. If not, block it.`
+
+**What Does auth:sanctum Do?**
+When you put auth:sanctum on a routes, Laravel will check two possible ways of authenticating a user:
+
+1. Session Cookie Authentication (SPA Mode)
+
+- Used when your Vue/React frontend is on the same domain as your laravel app.
+- Browser automatically sends the sesion cookie.
+- Sanctum says: "Cool, I see your session, you're logged in as User #1."
+
+2. API Token Authentication
+
+- Used by mobile app, Postman, or external APIs.
+- You send a header
+
+### 2. Update User Model
+
+```php
+// app/Models/User.php
+use Laravel\Sanctum\HasApiTokens;
+
+class User extends Authenticatable
+{
+    use HasApiTokens, HasFactory, Notifiable;
+    // ... rest stays the same
+}
+```
+
+## Part 1: API Resources
 
 ### What are API Resources?
 
-API Resources provide a transformation layer between your Eloquent models and the JSON responses sent to your API consumers.
+Think of API Resources as **formatters** - they clean up your data before sending it to users.
 
-### Why Use API Resources?
-
-- **Consistency**: Standardize output format
-- **Control**: Hide sensitive data
-- **Flexibility**: Transform data as needed
-- **Maintainability**: Centralize response logic
-
-### Creating Resources
+### Create a User Resource
 
 ```bash
-# Create a single resource
 php artisan make:resource UserResource
-
-# Create a resource collection
-php artisan make:resource UserCollection
-
-# Create both at once
-php artisan make:resource User --collection
 ```
 
-### Basic Resource Example
+### Simple User Resource
 
 ```php
 <?php
@@ -370,38 +399,30 @@ php artisan make:resource User --collection
 
 namespace App\Http\Resources;
 
-use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class UserResource extends JsonResource
 {
-    /**
-     * Transform the resource into an array.
-     */
-    public function toArray(Request $request): array
+    public function toArray($request)
     {
         return [
             'id' => $this->id,
             'name' => $this->name,
             'email' => $this->email,
-            'created_at' => $this->created_at->format('Y-m-d H:i:s'),
-            'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
-            // Don't include password or other sensitive data
+            'joined' => $this->created_at->format('M d, Y'),
+            // Notice: NO password field!
         ];
     }
 }
 ```
 
-### Using Resources in Controllers
+### Use Resource in Controller
 
 ```php
 <?php
+// app/Http/Controllers/Api/UserController.php
 
-namespace App\Http\Controllers\Api;
-
-use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
-use App\Models\User;
 
 class UserController extends Controller
 {
@@ -415,166 +436,18 @@ class UserController extends Controller
     {
         return new UserResource($user);
     }
-
-    public function store(Request $request)
-    {
-        $validatedData = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8',
-        ]);
-
-        $user = User::create([
-            'name' => $validatedData['name'],
-            'email' => $validatedData['email'],
-            'password' => bcrypt($validatedData['password']),
-        ]);
-
-        return new UserResource($user);
-    }
 }
 ```
 
-### Advanced Resource Features
+## Part 2: Simple Authentication API
 
-```php
-<?php
-
-namespace App\Http\Resources;
-
-use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\JsonResource;
-
-class UserResource extends JsonResource
-{
-    public function toArray(Request $request): array
-    {
-        return [
-            'id' => $this->id,
-            'name' => $this->name,
-            'email' => $this->email,
-
-            // Conditional attributes
-            'email_verified_at' => $this->when(
-                $this->email_verified_at,
-                $this->email_verified_at?->format('Y-m-d H:i:s')
-            ),
-
-            // Conditional relationships
-            'posts' => PostResource::collection($this->whenLoaded('posts')),
-
-            // Computed attributes
-            'full_name' => $this->first_name . ' ' . $this->last_name,
-
-            // Timestamps
-            'created_at' => $this->created_at->format('Y-m-d H:i:s'),
-            'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
-        ];
-    }
-
-    /**
-     * Get additional data that should be returned with the resource array.
-     */
-    public function with(Request $request): array
-    {
-        return [
-            'version' => '1.0',
-            'author_url' => url('http://author.com'),
-        ];
-    }
-}
-```
-
-### Resource Collections
-
-```php
-<?php
-// app/Http/Resources/UserCollection.php
-
-namespace App\Http\Resources;
-
-use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\ResourceCollection;
-
-class UserCollection extends ResourceCollection
-{
-    /**
-     * Transform the resource collection into an array.
-     */
-    public function toArray(Request $request): array
-    {
-        return [
-            'data' => $this->collection,
-            'meta' => [
-                'total' => $this->collection->count(),
-                'fetched_at' => now()->format('Y-m-d H:i:s'),
-            ],
-        ];
-    }
-}
-```
-
-## 2. API Authentication Basics
-
-### Why API Authentication?
-
-- Protect sensitive endpoints
-- Track API usage
-- Rate limiting
-- Personalized responses
-
-### Token-Based Authentication
-
-Laravel provides built-in token authentication via Laravel Sanctum.
-
-### Installing Laravel Sanctum
+### Create Auth Controller
 
 ```bash
-composer require laravel/sanctum
-php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
-php artisan migrate
+php artisan make:controller Api/AuthController
 ```
 
-### Setting Up Sanctum
-
-```php
-// config/sanctum.php - Key configurations
-'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
-    '%s%s',
-    'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
-    Sanctum::currentApplicationUrlWithPort()
-))),
-
-'guard' => ['web'],
-'expiration' => null, // tokens don't expire by default
-'middleware' => [
-    'verify_csrf_token' => App\Http\Middleware\VerifyCsrfToken::class,
-    'encrypt_cookies' => App\Http\Middleware\EncryptCookies::class,
-],
-```
-
-### User Model Setup
-
-```php
-<?php
-// app/Models/User.php
-
-namespace App\Models;
-
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Foundation\Auth\User as Authenticatable;
-use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens;
-
-class User extends Authenticatable
-{
-    use HasApiTokens, HasFactory, Notifiable;
-
-    // ... rest of your User model
-}
-```
-
-### Authentication Controller
+### Auth Controller (Copy-Paste Friendly)
 
 ```php
 <?php
@@ -586,37 +459,34 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    // Register new user
     public function register(Request $request)
     {
-        $validatedData = $request->validate([
+        $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
+            'password' => 'required|string|min:8',
         ]);
 
         $user = User::create([
-            'name' => $validatedData['name'],
-            'email' => $validatedData['email'],
-            'password' => Hash::make($validatedData['password']),
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
         ]);
 
         $token = $user->createToken('API Token')->plainTextToken;
 
         return response()->json([
-            'status' => 'success',
-            'message' => 'User registered successfully',
-            'data' => [
-                'user' => $user,
-                'token' => $token,
-                'token_type' => 'Bearer'
-            ]
+            'message' => 'Registration successful!',
+            'user' => $user,
+            'token' => $token
         ], 201);
     }
 
+    // Login user
     public function login(Request $request)
     {
         $request->validate([
@@ -626,57 +496,53 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (! $user || ! Hash::check($request->password, $user->password)) {
-            throw ValidationException::withMessages([
-                'email' => ['The provided credentials are incorrect.'],
-            ]);
+        if (!$user || !Hash::check($request->password, $user->password)) {
+            return response()->json([
+                'message' => 'Invalid credentials'
+            ], 401);
         }
 
         $token = $user->createToken('API Token')->plainTextToken;
 
         return response()->json([
-            'status' => 'success',
-            'message' => 'Login successful',
-            'data' => [
-                'user' => $user,
-                'token' => $token,
-                'token_type' => 'Bearer'
-            ]
+            'message' => 'Login successful!',
+            'user' => $user,
+            'token' => $token
         ]);
     }
 
+    // Logout user
     public function logout(Request $request)
     {
         $request->user()->currentAccessToken()->delete();
 
         return response()->json([
-            'status' => 'success',
             'message' => 'Logged out successfully'
         ]);
     }
 
+    // Get current user
     public function me(Request $request)
     {
         return response()->json([
-            'status' => 'success',
-            'data' => $request->user()
+            'user' => $request->user()
         ]);
     }
 }
 ```
 
-### Protected Routes
+### Set Up Routes
 
 ```php
 // routes/api.php
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\UserController;
 
-// Public routes
+// Public routes (no authentication needed)
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
-// Protected routes
+// Protected routes (need authentication)
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
@@ -684,152 +550,788 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 ```
 
-## 3. Testing APIs with Postman
+## Part 3: Hands-On Exercise - Build a Task API
 
-### Setting Up Postman
+### Step 1: Create Task Model
 
-- Download and install Postman
-- Create a new workspace for your project
-- Set up environment variables
+```bash
+php artisan make:model Task -m
+```
 
-### Environment Variables in Postman
+### Step 2: Task Migration
+
+```php
+// database/migrations/create_tasks_table.php
+public function up()
+{
+    Schema::create('tasks', function (Blueprint $table) {
+        $table->id();
+        $table->string('title');
+        $table->text('description')->nullable();
+        $table->boolean('completed')->default(false);
+        $table->foreignId('user_id')->constrained()->onDelete('cascade');
+        $table->timestamps();
+    });
+}
+```
+
+### Step 3: Task Model
+
+```php
+// app/Models/Task.php
+class Task extends Model
+{
+    protected $fillable = ['title', 'description', 'completed', 'user_id'];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+```
+
+### Step 4: Task Resource
+
+```bash
+php artisan make:resource TaskResource
+```
+
+```php
+// app/Http/Resources/TaskResource.php
+public function toArray($request)
+{
+    return [
+        'id' => $this->id,
+        'title' => $this->title,
+        'description' => $this->description,
+        'completed' => $this->completed,
+        'created_at' => $this->created_at->format('M d, Y'),
+    ];
+}
+```
+
+### Step 5: Task Controller
+
+```bash
+php artisan make:controller Api/TaskController --api
+```
+
+```php
+// app/Http/Controllers/Api/TaskController.php
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Http\Resources\TaskResource;
+use App\Models\Task;
+use Illuminate\Http\Request;
+
+class TaskController extends Controller
+{
+    public function index(Request $request)
+    {
+        $tasks = $request->user()->tasks;
+        return TaskResource::collection($tasks);
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'title' => 'required|string|max:255',
+            'description' => 'nullable|string',
+        ]);
+
+        $task = $request->user()->tasks()->create([
+            'title' => $request->title,
+            'description' => $request->description,
+        ]);
+
+        return new TaskResource($task);
+    }
+
+    public function show(Task $task)
+    {
+        // Make sure user owns this task
+        if ($task->user_id !== auth()->id()) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+
+        return new TaskResource($task);
+    }
+
+    public function update(Request $request, Task $task)
+    {
+        if ($task->user_id !== auth()->id()) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+
+        $request->validate([
+            'title' => 'sometimes|required|string|max:255',
+            'description' => 'nullable|string',
+            'completed' => 'boolean',
+        ]);
+
+        $task->update($request->all());
+        return new TaskResource($task);
+    }
+
+    public function destroy(Task $task)
+    {
+        if ($task->user_id !== auth()->id()) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
+
+        $task->delete();
+        return response()->json(['message' => 'Task deleted']);
+    }
+}
+```
+
+### Step 6: Add Task Routes
+
+```php
+// routes/api.php
+Route::middleware('auth:sanctum')->group(function () {
+    // ... existing routes
+    Route::apiResource('tasks', TaskController::class);
+});
+```
+
+### Step 7: Update User Model
+
+```php
+// app/Models/User.php
+public function tasks()
+{
+    return $this->hasMany(Task::class);
+}
+```
+
+## Part 4: Testing with Postman
+
+### Quick Postman Setup
+
+1. **Create Environment**:
+   - `base_url`: `http://localhost:8000/api`
+   - `token`: (empty for now)
+
+### Test Flow:
+
+1. **Register**: POST `{{base_url}}/register`
+2. **Login**: POST `{{base_url}}/login` → Save token
+3. **Create Task**: POST `{{base_url}}/tasks` with Bearer token
+4. **Get Tasks**: GET `{{base_url}}/tasks` with Bearer token
+
+### Sample Request Bodies:
+
+**Register:**
 
 ```json
 {
-  "base_url": "http://localhost:8000/api",
-  "token": ""
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "password123"
 }
 ```
 
-### Testing Authentication Flow
+**Login:**
 
-#### 1. Register a New User
-
-```
-POST {{base_url}}/register
-Headers:
-  Content-Type: application/json
-Body (JSON):
+```json
 {
-    "name": "John Doe",
-    "email": "john@example.com",
-    "password": "password123",
-    "password_confirmation": "password123"
+  "email": "john@example.com",
+  "password": "password123"
 }
 ```
 
-#### 2. Login
+**Create Task:**
 
-```
-POST {{base_url}}/login
-Headers:
-  Content-Type: application/json
-Body (JSON):
+```json
 {
-    "email": "john@example.com",
-    "password": "password123"
+  "title": "Learn Laravel APIs",
+  "description": "Complete the Laravel API tutorial"
 }
 ```
 
-_Save the token from response to environment variable_
+## What You Built (Summary)
 
-#### 3. Access Protected Route
+✅ User authentication (register, login, logout)
+✅ Protected API routes
+✅ Clean data formatting with Resources
+✅ Complete CRUD API for tasks
+✅ User-specific data (users only see their tasks)
 
-```
-GET {{base_url}}/me
-Headers:
-  Authorization: Bearer {{token}}
-  Accept: application/json
-```
-
-### Testing CRUD Operations
-
-```
-# GET all users
-GET {{base_url}}/users
-Headers:
-  Authorization: Bearer {{token}}
-  Accept: application/json
-
-# GET single user
-GET {{base_url}}/users/1
-Headers:
-  Authorization: Bearer {{token}}
-  Accept: application/json
-
-# POST create user
-POST {{base_url}}/users
-Headers:
-  Authorization: Bearer {{token}}
-  Content-Type: application/json
-Body (JSON):
-{
-    "name": "Jane Doe",
-    "email": "jane@example.com",
-    "password": "password123"
-}
-
-# PUT update user
-PUT {{base_url}}/users/1
-Headers:
-  Authorization: Bearer {{token}}
-  Content-Type: application/json
-Body (JSON):
-{
-    "name": "Jane Smith",
-    "email": "jane.smith@example.com"
-}
-
-# DELETE user
-DELETE {{base_url}}/users/1
-Headers:
-  Authorization: Bearer {{token}}
-  Accept: application/json
-```
-
-### Postman Collections and Testing
-
-Create automated tests in Postman:
-
-```javascript
-// Test for successful login
-pm.test("Login successful", function () {
-  pm.response.to.have.status(200);
-  const response = pm.response.json();
-  pm.expect(response.status).to.eql("success");
-  pm.expect(response.data.token).to.exist;
-
-  // Save token for other requests
-  pm.environment.set("token", response.data.token);
-});
-
-// Test for user creation
-pm.test("User created successfully", function () {
-  pm.response.to.have.status(201);
-  const response = pm.response.json();
-  pm.expect(response.status).to.eql("success");
-  pm.expect(response.data.id).to.exist;
-});
-```
-
-## Hands-On Exercise
-
-1. Create a Product API with authentication
-2. Create ProductResource for data transformation
-3. Set up protected routes for product management
-4. Test all endpoints with Postman including authentication flow
+This gives you a solid foundation for any API project!
 
 ---
 
-# Session 18: File Handling
+# Laravel File Handling - Session 18
 
-## Learning Objectives
+---
 
-By the end of this session, you will:
+## 1. Introduction to File Handling {#introduction}
 
-- Understand how to handle file uploads in Laravel
-- Know how to store and organize files
-- Be able to process and validate uploaded files
-- Understand basic image processing concepts
+File handling is a crucial aspect of web applications. Laravel provides robust tools for:
 
-### --Continue--
+- **File Uploads**: Receiving files from users
+- **Storage Management**: Organizing and storing files securely
+- **File Validation**: Ensuring uploaded files meet requirements
+- **Image Processing**: Resizing, cropping, and optimizing images
+- **File Serving**: Delivering files to users safely
+
+### Common Use Cases
+
+- Profile picture uploads
+- Document management systems
+- Image galleries
+- File sharing platforms
+- Report generation and downloads
+
+---
+
+## 2. Setting Up File Storage {#setup}
+
+### Storage Configuration
+
+Laravel uses the **Filesystem** abstraction for file storage. Configure in `config/filesystems.php`:
+
+```php
+// config/filesystems.php
+'disks' => [
+    'local' => [
+        'driver' => 'local',
+        'root' => storage_path('app'),
+    ],
+
+    'public' => [
+        'driver' => 'local',
+        'root' => storage_path('app/public'),
+        'url' => env('APP_URL').'/storage',
+        'visibility' => 'public',
+    ],
+
+    'uploads' => [
+        'driver' => 'local',
+        'root' => storage_path('app/uploads'),
+        'visibility' => 'private',
+    ],
+],
+```
+
+### Create Storage Link
+
+```bash
+# Create symbolic link to access public files
+php artisan storage:link
+```
+
+### Directory Structure
+
+```
+storage/
+├── app/
+│   ├── public/          # Publicly accessible files
+│   │   ├── images/
+│   │   ├── documents/
+│   │   └── uploads/
+│   ├── private/         # Private files
+│   └── uploads/         # Custom upload directory
+├── framework/
+└── logs/
+```
+
+---
+
+## 3. Basic File Upload {#basic-upload}
+
+### Step 1: Create Migration for File Records
+
+```bash
+php artisan make:migration create_uploaded_files_table
+```
+
+```php
+// database/migrations/xxxx_create_uploaded_files_table.php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up()
+    {
+        Schema::create('uploaded_files', function (Blueprint $table) {
+            $table->id();
+            $table->string('original_name');
+            $table->string('file_name');
+            $table->string('file_path');
+            $table->string('mime_type');
+            $table->unsignedBigInteger('file_size');
+            $table->string('disk')->default('public');
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+        });
+    }
+
+    public function down()
+    {
+        Schema::dropIfExists('uploaded_files');
+    }
+};
+```
+
+### Step 2: Create File Model
+
+```bash
+php artisan make:model UploadedFile
+```
+
+```php
+// app/Models/UploadedFile.php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
+
+class UploadedFile extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'original_name',
+        'file_name',
+        'file_path',
+        'mime_type',
+        'file_size',
+        'disk',
+        'metadata'
+    ];
+
+    protected $casts = [
+        'metadata' => 'array'
+    ];
+
+    /**
+     * Get the full URL to the file
+     */
+    public function getUrlAttribute()
+    {
+        if ($this->disk === 'public') {
+            return Storage::disk('public')->url($this->file_path);
+        }
+
+        return route('files.download', $this->id);
+    }
+
+    /**
+     * Get human readable file size
+     */
+    public function getFileSizeHumanAttribute()
+    {
+        $bytes = $this->file_size;
+        $units = ['B', 'KB', 'MB', 'GB'];
+
+        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
+            $bytes /= 1024;
+        }
+
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
+
+    /**
+     * Check if file is an image
+     */
+    public function isImage()
+    {
+        return str_starts_with($this->mime_type, 'image/');
+    }
+
+    /**
+     * Delete the file from storage when model is deleted
+     */
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::deleting(function ($file) {
+            Storage::disk($file->disk)->delete($file->file_path);
+        });
+    }
+}
+```
+
+### Step 3: Create File Upload Controller
+
+```bash
+php artisan make:controller FileUploadController
+```
+
+```php
+// app/Http/Controllers/FileUploadController.php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\UploadedFile;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+
+class FileUploadController extends Controller
+{
+    /**
+     * Upload a single file
+     */
+    public function uploadSingle(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'file' => 'required|file|max:10240', // Max 10MB
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $file = $request->file('file');
+            $originalName = $file->getClientOriginalName();
+            $mimeType = $file->getMimeType();
+            $fileSize = $file->getSize();
+
+            // Generate unique filename
+            $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
+
+            // Store file
+            $filePath = $file->storeAs('uploads', $fileName, 'public');
+
+            // Save file record
+            $uploadedFile = UploadedFile::create([
+                'original_name' => $originalName,
+                'file_name' => $fileName,
+                'file_path' => $filePath,
+                'mime_type' => $mimeType,
+                'file_size' => $fileSize,
+                'disk' => 'public',
+                'metadata' => [
+                    'uploaded_at' => now(),
+                    'ip_address' => $request->ip()
+                ]
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'File uploaded successfully',
+                'data' => [
+                    'id' => $uploadedFile->id,
+                    'original_name' => $uploadedFile->original_name,
+                    'file_size' => $uploadedFile->file_size_human,
+                    'mime_type' => $uploadedFile->mime_type,
+                    'url' => $uploadedFile->url,
+                    'uploaded_at' => $uploadedFile->created_at
+                ]
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Upload failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload multiple files
+     */
+    public function uploadMultiple(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'files' => 'required|array|max:5',
+            'files.*' => 'file|max:5120', // Max 5MB per file
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $uploadedFiles = [];
+
+        try {
+            foreach ($request->file('files') as $file) {
+                $originalName = $file->getClientOriginalName();
+                $mimeType = $file->getMimeType();
+                $fileSize = $file->getSize();
+
+                // Generate unique filename
+                $fileName = Str::uuid() . '.' . $file->getClientOriginalExtension();
+
+                // Store file
+                $filePath = $file->storeAs('uploads', $fileName, 'public');
+
+                // Save file record
+                $uploadedFile = UploadedFile::create([
+                    'original_name' => $originalName,
+                    'file_name' => $fileName,
+                    'file_path' => $filePath,
+                    'mime_type' => $mimeType,
+                    'file_size' => $fileSize,
+                    'disk' => 'public',
+                    'metadata' => [
+                        'uploaded_at' => now(),
+                        'ip_address' => $request->ip()
+                    ]
+                ]);
+
+                $uploadedFiles[] = [
+                    'id' => $uploadedFile->id,
+                    'original_name' => $uploadedFile->original_name,
+                    'file_size' => $uploadedFile->file_size_human,
+                    'mime_type' => $uploadedFile->mime_type,
+                    'url' => $uploadedFile->url,
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => count($uploadedFiles) . ' files uploaded successfully',
+                'data' => $uploadedFiles
+            ], 201);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Upload failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get file information
+     */
+    public function getFile($id)
+    {
+        $file = UploadedFile::find($id);
+
+        if (!$file) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File not found'
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'id' => $file->id,
+                'original_name' => $file->original_name,
+                'file_size' => $file->file_size_human,
+                'mime_type' => $file->mime_type,
+                'url' => $file->url,
+                'is_image' => $file->isImage(),
+                'uploaded_at' => $file->created_at,
+                'metadata' => $file->metadata
+            ]
+        ]);
+    }
+
+    /**
+     * Download file
+     */
+    public function downloadFile($id)
+    {
+        $file = UploadedFile::find($id);
+
+        if (!$file) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File not found'
+            ], 404);
+        }
+
+        if (!Storage::disk($file->disk)->exists($file->file_path)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File not found on disk'
+            ], 404);
+        }
+
+        return Storage::disk($file->disk)->download($file->file_path, $file->original_name);
+    }
+
+    /**
+     * Delete file
+     */
+    public function deleteFile($id)
+    {
+        $file = UploadedFile::find($id);
+
+        if (!$file) {
+            return response()->json([
+                'success' => false,
+                'message' => 'File not found'
+            ], 404);
+        }
+
+        try {
+            $file->delete(); // Will also delete from storage due to boot method
+
+            return response()->json([
+                'success' => true,
+                'message' => 'File deleted successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Delete failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * List all files
+     */
+    public function listFiles(Request $request)
+    {
+        $perPage = $request->input('per_page', 10);
+        $files = UploadedFile::latest()->paginate($perPage);
+
+        $filesData = $files->getCollection()->map(function ($file) {
+            return [
+                'id' => $file->id,
+                'original_name' => $file->original_name,
+                'file_size' => $file->file_size_human,
+                'mime_type' => $file->mime_type,
+                'url' => $file->url,
+                'is_image' => $file->isImage(),
+                'uploaded_at' => $file->created_at
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $filesData,
+            'pagination' => [
+                'current_page' => $files->currentPage(),
+                'total_pages' => $files->lastPage(),
+                'per_page' => $files->perPage(),
+                'total_items' => $files->total()
+            ]
+        ]);
+    }
+}
+```
+
+---
+
+## 4. File Validation {#validation}
+
+### Advanced Validation Rules
+
+```php
+// app/Http/Requests/FileUploadRequest.php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class FileUploadRequest extends FormRequest
+{
+    public function authorize()
+    {
+        return true;
+    }
+
+    public function rules()
+    {
+        return [
+            'file' => [
+                'required',
+                'file',
+                'max:10240', // 10MB
+                'mimes:jpg,jpeg,png,gif,pdf,doc,docx,txt',
+                'dimensions:max_width=2000,max_height=2000' // For images only
+            ]
+        ];
+    }
+
+    public function messages()
+    {
+        return [
+            'file.required' => 'Please select a file to upload.',
+            'file.max' => 'File size must not exceed 10MB.',
+            'file.mimes' => 'File must be an image, PDF, or document.',
+            'file.dimensions' => 'Image dimensions must not exceed 2000x2000 pixels.'
+        ];
+    }
+}
+```
+
+---
+
+## 5. Testing with Postman {#testing}
+
+### API Routes Setup
+
+Add these routes to your `routes/api.php`:
+
+```php
+// routes/api.php
+<?php
+
+use App\Http\Controllers\FileUploadController;
+use App\Http\Controllers\ImageController;
+use Illuminate\Support\Facades\Route;
+
+// File Upload Routes
+Route::prefix('files')->group(function () {
+    Route::post('upload/single', [FileUploadController::class, 'uploadSingle']);
+    Route::post('upload/multiple', [FileUploadController::class, 'uploadMultiple']);
+    Route::get('list', [FileUploadController::class, 'listFiles']);
+    Route::get('{id}', [FileUploadController::class, 'getFile']);
+    Route::get('{id}/download', [FileUploadController::class, 'downloadFile'])->name('files.download');
+    Route::delete('{id}', [FileUploadController::class, 'deleteFile']);
+});
+
+// Image Processing Routes
+Route::prefix('images')->group(function () {
+    Route::post('upload', [ImageController::class, 'uploadAndProcess']);
+    Route::post('{id}/sizes', [ImageController::class, 'generateSizes']);
+    Route::post('{id}/filter', [ImageController::class, 'applyFilter']);
+});
+```
+
+### Postman Collection Examples
+
+#### 1. Single File Upload
+
+```
+POST: {{base_url}}/api/files/upload/single
+Content-Type: multipart/form-data
+
+Body (form-data):
+- Key: file, Type: File, Value: [Select your file]
+```
+
+#### 2. Multiple File Upload
+
+```
+POST: {{base_url}}/api/files/upload/multiple
+Content-Type: multipart/form-data
+
+Body (form-data):
+- Key: files[], Type: File, Value: [Select file 1]
+- Key: files[], Type: File, Value: [Select file 2]
+```
