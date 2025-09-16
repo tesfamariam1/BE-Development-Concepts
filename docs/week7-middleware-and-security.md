@@ -2,16 +2,15 @@
 
 ## Session Overview
 
-**Duration:** 90 minutes  
 **Testing Tool:** Postman  
 **Focus:** API Development
 
 ### Time Breakdown
 
-- **Part 1:** Understanding Middleware (20 min)
-- **Part 2:** Creating Custom API Middleware (25 min)
-- **Part 3:** API Security & Token Authentication (25 min)
-- **Part 4:** Hands-on Practice with Postman (20 min)
+- **Part 1:** Understanding Middleware
+- **Part 2:** Creating Custom API Middleware
+- **Part 3:** API Security & Token Authentication
+- **Part 4:** Hands-on Practice with Postman
 
 ---
 
@@ -36,7 +35,7 @@ Route::middleware('api')->group(function () {
 
 The `api` middleware group includes:
 
-- `throttle:api` - Rate limiting (60 requests per minute)
+- `throttle:api` - Rate limiting
 - `bindings` - Route model binding
 
 ### Common API Middleware Use Cases
